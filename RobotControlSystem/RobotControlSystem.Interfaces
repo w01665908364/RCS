@@ -1,0 +1,44 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+
+namespace RobotControlSystem
+{
+    public static class PluginManager
+    {
+        private static readonly string PluginFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Plugins");
+
+        static PluginManager()
+        {
+            if (!Directory.Exists(PluginFolder))
+                Directory.CreateDirectory(PluginFolder);
+        }
+
+        /// <summary>
+        /// 加载指定接口的第一个实现类
+        /// </summary>
+        public static T? LoadFirstPlugin<T>() where T : class
+        {
+            var dlls = Directory.GetFiles(PluginFolder, "*.dll");
+            foreach (var dll in dlls)
+            {
+                try
+                {
+                    var assembly = Assembly.LoadFrom(dll);
+                    var types = assembly.GetTypes().Where(t => typeof(T).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
+                    foreach (var type in types)
+                    {
+                        return Activator.CreateInstance(type) as T;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"加载 {dll} 失败: {ex.Message}");
+                }
+            }
+            return null;
+        }
+    }
+}

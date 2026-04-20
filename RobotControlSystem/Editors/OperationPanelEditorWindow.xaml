@@ -1,0 +1,100 @@
+﻿<Window x:Class="RobotControlSystem.Editors.OperationPanelEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="操作面板编辑器" Height="650" Width="1200"
+        WindowStartupLocation="CenterOwner">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 工具栏 -->
+        <ToolBar Grid.Row="0">
+            <Button x:Name="BtnNewTemplate" Content="新建模板" Click="BtnNewTemplate_Click"/>
+            <Button x:Name="BtnOpenTemplate" Content="打开模板" Click="BtnOpenTemplate_Click"/>
+            <Button x:Name="BtnSaveTemplate" Content="保存模板" Click="BtnSaveTemplate_Click"/>
+            <Separator/>
+            <ComboBox x:Name="ElemTypeCombo" SelectedIndex="0" Width="100">
+                <ComboBoxItem Content="按钮" Tag="Button"/>
+                <ComboBoxItem Content="旋钮" Tag="Knob"/>
+                <ComboBoxItem Content="指示灯" Tag="Lamp"/>
+            </ComboBox>
+            <Button x:Name="BtnAddElement" Content="添加元素" Click="BtnAddElement_Click"/>
+            <Separator/>
+            <Button x:Name="BtnDeleteTemplate" Content="删除模板" Click="BtnDeleteTemplate_Click" Foreground="Red"/>
+            <Separator/>
+            <!-- 编辑模式切换按钮 -->
+            <Button x:Name="BtnToggleEditMode" Content="🔒 只读模式" Click="BtnToggleEditMode_Click" Background="LightGreen"/>
+            <Separator/>
+            <!-- 当前模式显示 -->
+            <TextBlock x:Name="TxtMode" Text="编辑模式" Margin="5,0" Foreground="Green" FontWeight="Bold" VerticalAlignment="Center"/>
+            <Separator/>
+            <TextBlock x:Name="TxtStatus" Text="就绪" Margin="10,0" VerticalAlignment="Center"/>
+        </ToolBar>
+
+        <!-- 主区域：三列 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左侧模板列表 -->
+            <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="0,0,1,0" Padding="5">
+                <StackPanel>
+                    <TextBlock Text="模板列表" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <ListBox x:Name="TemplateListBox" DisplayMemberPath="Name" SelectionChanged="TemplateListBox_SelectionChanged"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 中间画布（带滚动条） -->
+            <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="0,0,1,0" Padding="5" Background="#2b2b2b">
+                <ScrollViewer x:Name="CanvasScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Canvas x:Name="DrawingCanvas" Width="800" Height="600" Background="#1e1e1e"
+                            MouseDown="DrawingCanvas_MouseDown" MouseMove="DrawingCanvas_MouseMove" MouseUp="DrawingCanvas_MouseUp">
+                        <!-- 辅助线（默认隐藏） -->
+                        <Line x:Name="GuideVertical" Stroke="Red" StrokeThickness="1" StrokeDashArray="5,3" Visibility="Collapsed"/>
+                        <Line x:Name="GuideHorizontal" Stroke="Red" StrokeThickness="1" StrokeDashArray="5,3" Visibility="Collapsed"/>
+                    </Canvas>
+                </ScrollViewer>
+            </Border>
+
+            <!-- 右侧属性面板 -->
+            <Border Grid.Column="2" Padding="5">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="PropertyPanel">
+                        <TextBlock Text="模板属性" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <StackPanel x:Name="TemplatePropertyPanel">
+                            <!-- 动态生成模板属性 -->
+                        </StackPanel>
+                        <TextBlock Text="元素属性" FontWeight="Bold" Margin="0,10,0,5"/>
+                        <Border x:Name="NoSelectionPanel" Visibility="Visible">
+                            <TextBlock Text="请选择一个元素" Foreground="Gray" HorizontalAlignment="Center"/>
+                        </Border>
+                        <StackPanel x:Name="ElementPropertyPanel" Visibility="Collapsed">
+                            <!-- 属性编辑控件动态生成 -->
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <!-- 底部状态栏 -->
+        <StatusBar Grid.Row="2">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusCoord" Text="坐标: —"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="StatusElement" Text="选中: 无"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="StatusDb" Text="数据库: 正常"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
