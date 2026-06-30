@@ -153,35 +153,47 @@ namespace RobotControlSystem.Services
         /// </summary>
         public async Task<bool> RunTaskAsync(string taskName)
         {
-            // 等待当前任务结束
-            while (true)
-            {
-                var response1 = await SendCommandAsync("task -r");
-                if (response1.Trim().EndsWith("Task is not running.")) { break; }
-            }
-
             try
             {
-                Log($"发送运行任务指令...");
-                var responseTask = await SendCommandAsync($"task -p {taskName}");
-                var responsePlay = await SendCommandAsync("play");
-                await Task.Delay(2000); // 等待任务开始执行
-                Log("等待了2s");
+                // 1. 等待当前任务结束
                 while (true)
                 {
                     var response1 = await SendCommandAsync("task -r");
-                    if (response1.Trim().EndsWith("Task is not running.")) { break; }
-                    Log("✅ 任务启动成功");
-                    return true;
+                    if (response1.Trim().EndsWith("Task is not running.", StringComparison.OrdinalIgnoreCase))
+                    {
+                        break;
+                    }
+                    // 加上极短的延时，防止频繁发指令导致CPU和网络空转死锁
+                    await Task.Delay(200);
                 }
-                //if (responsePlay.Trim().EndsWith("Starting task") || responsePlay.Trim().EndsWith("OK"))
-                //{
-                //    Log("✅ 任务启动成功");
-                //    return true;
-                //}
 
-                Log($"运行任务返回: {responseTask}");
-                return false;
+                Log($"发送运行任务指令...");
+                var responseTask = await SendCommandAsync($"task -p {taskName}");
+
+                // 2. 检查加载任务是否成功。如果失败，绝不执行 play！
+                if (responseTask.Contains("ERR", StringComparison.OrdinalIgnoreCase) ||
+                    responseTask.Contains("not exist", StringComparison.OrdinalIgnoreCase) ||
+                    responseTask.Contains("fail", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log($"❌ 加载任务失败: {responseTask}");
+                    return false;
+                }
+
+                // 3. 运行任务
+                var responsePlay = await SendCommandAsync("play");
+                await Task.Delay(2000); // 等待任务开始执行
+                Log("等待了2s");
+
+                // 4. 验证任务是否真正在运行中（优化了原有的假循环）
+                var responseCheck = await SendCommandAsync("task -r");
+                if (responseCheck.Trim().EndsWith("Task is not running.", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log($"❌ 任务启动后异常停止或未能启动: {responseCheck}");
+                    return false;
+                }
+
+                Log("✅ 任务启动成功");
+                return true;
             }
             catch (Exception ex)
             {

@@ -237,7 +237,7 @@ namespace Plugin.UserDevice
                                 // 校验失败，记录期望值和计算值，丢弃首字节继续
                                 try
                                 {
-                                    System.Diagnostics.Debug.WriteLine($"[校验失败] index={checksumIdx} expected=0x{expected:X2} calc=0x{calc:X2} 包预览={BitConverter.ToString(packet,0, Math.Min(30, packet.Length))}");
+                                    System.Diagnostics.Debug.WriteLine($"[校验失败] index={checksumIdx} expected=0x{expected:X2} calc=0x{calc:X2} 包预览={BitConverter.ToString(packet, 0, Math.Min(30, packet.Length))}");
                                 }
                                 catch { }
                                 buffer.RemoveAt(0);
@@ -554,20 +554,149 @@ namespace Plugin.UserDevice
         }
 
         /// <summary>
-        /// 解析建筑消防设施部件运行状态 (0x02) - 完全复用JAVA的DeviceStatusGuoBiao
-        /// 每条信息体92字节
+        /// 解析建筑消防设施部件运行状态 (0x02) - 按GB/T 26875.3-2011国标修正
+        /// 国标定义：类型标志(1字节) + 信息对象数目(1字节) + 信息对象(N×40字节)
         /// </summary>
         private void ParsePartStatus(byte[] appData, string deviceCode)
         {
             try
             {
-                if (appData.Length < 4) return;
+                // 【国标修正】应用数据格式：类型(1字节) + 数目(1字节) + 信息体
+                if (appData.Length < 2) return;
 
-                // 信息数量位于索引2-3（应用数据单元格式：类型1+类型2+数量1+数量2+信息体）
-                int messageNumber = (appData[2] << 8) | appData[3];
+                // 【国标修正】数目为1字节
+                byte messageNumber = appData[1];
+
+                // 如果数目为0，可能设备使用了2字节数目，尝试兼容
+                if (messageNumber == 0 && appData.Length >= 4)
+                {
+                    // 尝试2字节数目（兼容模式）
+                    int altNumber = (appData[2] << 8) | appData[3];
+                    if (altNumber > 0 && (4 + altNumber * 40) <= appData.Length)
+                    {
+                        ParsePartStatusLegacy(appData, deviceCode);
+                        return;
+                    }
+                }
+
                 if (messageNumber <= 0) return;
 
-                // 每条信息体92字节
+                // 【国标修正】每条信息体40字节（GB/T 26875.3-2011 图7）
+                const int unitSize = 40;
+
+                // 【国标修正】信息体从索引2开始（类型1字节 + 数目1字节 = 2字节头部）
+                for (int i = 0; i < messageNumber && (2 + (i + 1) * unitSize) <= appData.Length; i++)
+                {
+                    int idx = 2 + i * unitSize;
+                    byte[] unit = new byte[unitSize];
+                    Array.Copy(appData, idx, unit, 0, unitSize);
+
+                    // 【国标修正】按40字节结构解析
+                    // 字段偏移（基于unit数组）：
+                    // [0]系统类型(1B) [1]系统地址(1B) [2]部件类型(1B) [3-6]部件地址(4B) [7-8]部件状态(2B) [9-39]部件说明(31B)
+
+                    int systemType = unit[0];           // 系统类型 - 1字节
+                    int systemAddr = unit[1];           // 系统地址 - 1字节（消防主机编码）
+                    int partType = unit[2];             // 部件类型 - 1字节
+
+                    // 部件地址 - 4字节，格式：节点号低 + 节点号高 + 回路号低 + 回路号高
+                    int nodeNo = unit[3] | (unit[4] << 8);   // 节点号
+                    int loopNo = unit[5] | (unit[6] << 8);   // 回路号
+                    string addressNo = nodeNo.ToString();
+                    string loopNoStr = loopNo.ToString();
+
+                    // 部件状态 - 2字节，低字节在前
+                    int partStatus = unit[7] | (unit[8] << 8);
+
+                    // 状态位解析（16位二进制）
+                    // bitStat[0]=bit15, bitStat[14]=bit1, bitStat[15]=bit0
+                    string bitStat = Convert.ToString(partStatus, 2).PadLeft(16, '0');
+
+                    // 解析状态（按国标位定义，字符串索引=15-bit号）
+                    string partStat = "正常";
+                    int status = 2; // 0故障 1火警 2正常
+
+                    if (bitStat[14] == '1') { partStat = "火警"; status = 1; }           // bit1
+                    else if (bitStat[13] == '1') { partStat = "故障"; status = 0; }      // bit2
+                    else if (bitStat[12] == '1') { partStat = "屏蔽"; }                  // bit3
+                    else if (bitStat[11] == '1') { partStat = "监管"; }                  // bit4
+                    else if (bitStat[10] == '1') { partStat = "启动"; }                  // bit5
+                    else if (bitStat[9] == '1') { partStat = "反馈"; }                   // bit6
+                    else if (bitStat[8] == '1') { partStat = "延时"; }                   // bit7
+                    else if (bitStat[7] == '1') { partStat = "电源故障"; status = 0; }   // bit8
+                    else if (bitStat[15] == '1') { partStat = "正常运行"; }              // bit0
+                    else if (bitStat[0] == '0') { partStat = "测试运行"; }               // bit15=0
+
+                    // 部件说明 - 31字节，GB18030编码
+                    string partExplain = "";
+                    try
+                    {
+                        byte[] descBytes = new byte[31];
+                        Array.Copy(unit, 9, descBytes, 0, 31);
+                        partExplain = Encoding.GetEncoding("GB18030").GetString(descBytes)
+                            .TrimEnd('\0', '\xa5').Replace("\xa5\xa5", "").Trim();
+                    }
+                    catch { }
+
+                    // 设备编号
+                    string deviceCodeFull = deviceCode + systemAddr + "-" + loopNoStr + "-" + addressNo;
+
+                    // 当前时间作为上传时间
+                    string upTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+                    // 输出JSON
+                    var result = new
+                    {
+                        logId = Guid.NewGuid().ToString(),
+                        deviceCode = deviceCodeFull,
+                        address = partExplain,
+                        systemType = systemType,
+                        fireMainCode = systemAddr,
+                        partType = partType,
+                        loopNo = loopNoStr,
+                        addressNo = addressNo,
+                        statusName = partStat,
+                        partTypeExplain = "",
+                        userCode = deviceCode,
+                        upTime = upTime
+                    };
+
+                    string json = JsonConvert.SerializeObject(result);
+                    Console.WriteLine($"[0x02 部件状态-国标] {json}");
+                    System.Diagnostics.Debug.WriteLine(json);
+
+                    // 触发事件（所有状态都输出，便于调试）
+                    DeviceStatus eventStatus = DeviceStatus.Online;
+                    if (status == 1) eventStatus = DeviceStatus.FireAlarm;
+                    else if (status == 0) eventStatus = DeviceStatus.Error;
+
+                    StatusChanged?.Invoke(this, new DeviceEventArgs
+                    {
+                        Status = eventStatus,
+                        Message = json
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke(this, new DeviceEventArgs
+                {
+                    Status = DeviceStatus.Error,
+                    Message = $"解析部件状态异常: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// 部件状态解析 - 兼容模式（使用2字节数目 + 92字节信息体，保持与旧版JAVA一致）
+        /// </summary>
+        private void ParsePartStatusLegacy(byte[] appData, string deviceCode)
+        {
+            try
+            {
+                if (appData.Length < 4) return;
+                int messageNumber = (appData[2] << 8) | appData[3];
+                if (messageNumber <= 0) return;
                 int unitSize = 92;
 
                 for (int i = 0; i < messageNumber && (4 + (i + 1) * unitSize) <= appData.Length; i++)
@@ -575,42 +704,27 @@ namespace Plugin.UserDevice
                     int idx = 4 + i * unitSize;
                     string message = BitConverter.ToString(appData, idx, unitSize).Replace("-", "");
 
-                    // 完全按照JAVA的DeviceStatusGuoBiao解析
-                    // systemType: substring(0,2)
                     int systemType = Convert.ToInt32(message.Substring(0, 2), 16);
-                    // fireMainCode: substring(2,4)
                     int fireMainCode = Convert.ToInt32(message.Substring(2, 4), 16);
-                    // partType: substring(4,6)
                     int partType = Convert.ToInt32(message.Substring(4, 6), 16);
-                    // addressNo: 低字节在前 = substring(8,10) + substring(6,8)
                     string addressNo = Convert.ToInt32(message.Substring(8, 2) + message.Substring(6, 2), 16).ToString();
-                    // loopNo: 低字节在前 = substring(12,14) + substring(10,12)
                     string loopNo = Convert.ToInt32(message.Substring(12, 2) + message.Substring(10, 2), 16).ToString();
-
-                    // 状态位：substring(14,18) - 16位二进制
                     string bitStat = Convert.ToString(Convert.ToInt32(message.Substring(14, 4), 16), 2).PadLeft(16, '0');
 
-                    // 解析状态（完全按照JAVA逻辑）
                     string partStat = "正常";
-                    int status = 2; // 0故障 1火警 2正常
+                    int status = 2;
 
-                    if (bitStat[0] == '1') { partStat = "延时"; }
-                    else if (bitStat[1] == '1') { partStat = "反馈"; }
-                    else if (bitStat[2] == '1') { partStat = "启动"; }
-                    else if (bitStat[3] == '1') { partStat = "监管"; }
-                    else if (bitStat[4] == '1') { partStat = "屏蔽"; }
-                    else if (bitStat[5] == '1') { partStat = "故障"; status = 0; }
-                    else if (bitStat[6] == '1') { partStat = "火警"; status = 1; }
-                    else if (bitStat[8] == '1') { partStat = "正常"; }
-                    else if (bitStat[9] == '1') { partStat = "停止"; }
-                    else if (bitStat[10] == '1') { partStat = "监管取消"; }
-                    else if (bitStat[11] == '1') { partStat = "屏蔽取消"; }
-                    else if (bitStat[12] == '1') { partStat = "反馈取消"; }
-                    else if (bitStat[13] == '1') { partStat = "故障恢复"; }
-                    else if (bitStat[14] == '1') { partStat = "火警恢复"; }
-                    else if (bitStat[15] == '1') { partStat = "电源故障"; status = 0; }
+                    // 状态位解析（字符串索引=15-bit号）
+                    if (bitStat[14] == '1') { partStat = "火警"; status = 1; }           // bit1
+                    else if (bitStat[13] == '1') { partStat = "故障"; status = 0; }      // bit2
+                    else if (bitStat[12] == '1') { partStat = "屏蔽"; }                  // bit3
+                    else if (bitStat[11] == '1') { partStat = "监管"; }                  // bit4
+                    else if (bitStat[10] == '1') { partStat = "启动"; }                  // bit5
+                    else if (bitStat[9] == '1') { partStat = "反馈"; }                   // bit6
+                    else if (bitStat[8] == '1') { partStat = "延时"; }                   // bit7
+                    else if (bitStat[7] == '1') { partStat = "电源故障"; status = 0; }   // bit8
+                    else if (bitStat[15] == '1') { partStat = "正常运行"; }              // bit0
 
-                    // 部件说明：substring(18,80) - GB18030解码
                     string partExplain = "";
                     try
                     {
@@ -620,7 +734,6 @@ namespace Plugin.UserDevice
                     }
                     catch { }
 
-                    // 时间：substring(80) - 6字节
                     string upTime = "";
                     if (message.Length >= 92)
                     {
@@ -633,10 +746,8 @@ namespace Plugin.UserDevice
                         upTime = $"20{year:D2}-{month:D2}-{day:D2} {hour:D2}:{min:D2}:{sec:D2}";
                     }
 
-                    // 设备编号 = 源地址 + 回路号 + 地址号
                     string deviceCodeFull = deviceCode + fireMainCode + "-" + loopNo + "-" + addressNo;
 
-                    // 输出JSON（与JAVA格式一致）
                     var result = new
                     {
                         logId = Guid.NewGuid().ToString(),
@@ -654,26 +765,15 @@ namespace Plugin.UserDevice
                     };
 
                     string json = JsonConvert.SerializeObject(result);
-                    Console.WriteLine($"[0x02 部件状态] {json}");
+                    Console.WriteLine($"[0x02 部件状态-兼容] {json}");
                     System.Diagnostics.Debug.WriteLine(json);
 
-                    // 触发事件
-                    if (status == 1) // 火警
-                    {
-                        StatusChanged?.Invoke(this, new DeviceEventArgs
-                        {
-                            Status = DeviceStatus.FireAlarm,
-                            Message = json
-                        });
-                    }
-                    else if (status == 0) // 故障
-                    {
-                        StatusChanged?.Invoke(this, new DeviceEventArgs
-                        {
-                            Status = DeviceStatus.Error,
-                            Message = json
-                        });
-                    }
+                    // 触发事件（所有状态都输出）
+                    DeviceStatus eventStatus = DeviceStatus.Online;
+                    if (status == 1) eventStatus = DeviceStatus.FireAlarm;
+                    else if (status == 0) eventStatus = DeviceStatus.Error;
+
+                    StatusChanged?.Invoke(this, new DeviceEventArgs { Status = eventStatus, Message = json });
                 }
             }
             catch (Exception ex)
@@ -681,16 +781,95 @@ namespace Plugin.UserDevice
                 StatusChanged?.Invoke(this, new DeviceEventArgs
                 {
                     Status = DeviceStatus.Error,
-                    Message = $"解析部件状态异常: {ex.Message}"
+                    Message = $"解析部件状态异常(兼容模式): {ex.Message}"
                 });
             }
         }
 
         /// <summary>
-        /// 解析模拟量 (0x03) - 完全复用JAVA的Analog
-        /// 每条信息体32字节
+        /// 解析模拟量 (0x03) - 按GB/T 26875.3-2011国标修正
+        /// 国标定义：类型标志(1字节) + 信息对象数目(1字节) + 信息对象
         /// </summary>
         private void ParseAnalogQuantity(byte[] appData, string deviceCode)
+        {
+            try
+            {
+                // 【国标修正】应用数据格式：类型(1字节) + 数目(1字节) + 信息体
+                if (appData.Length < 2) return;
+
+                // 【国标修正】数目为1字节
+                byte messageNumber = appData[1];
+
+                // 如果数目为0，尝试兼容模式
+                if (messageNumber == 0 && appData.Length >= 4)
+                {
+                    int altNumber = (appData[2] << 8) | appData[3];
+                    if (altNumber > 0 && (4 + altNumber * 32) <= appData.Length)
+                    {
+                        ParseAnalogQuantityLegacy(appData, deviceCode);
+                        return;
+                    }
+                }
+
+                if (messageNumber <= 0) return;
+
+                // 国标定义模拟量信息体结构（参照图8）
+                const int unitSize = 20; // 估算值，具体需参照国标图8
+
+                for (int i = 0; i < messageNumber && (2 + (i + 1) * unitSize) <= appData.Length; i++)
+                {
+                    int idx = 2 + i * unitSize;
+                    byte[] unit = new byte[unitSize];
+                    Array.Copy(appData, idx, unit, 0, unitSize);
+
+                    int systemType = unit[0];
+                    int systemAddr = unit[1];
+                    int partType = unit[2];
+                    int nodeNo = unit[3] | (unit[4] << 8);
+                    int loopNo = unit[5] | (unit[6] << 8);
+                    int analogType = unit[7];
+                    int analogValue = unit[8] | (unit[9] << 8);
+
+                    string upTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    string deviceCodeFull = deviceCode + systemAddr + "-" + loopNo + "-" + nodeNo;
+
+                    var result = new
+                    {
+                        logId = Guid.NewGuid().ToString(),
+                        deviceCode = deviceCodeFull,
+                        address = $"模拟量:{analogValue}",
+                        addressNo = nodeNo.ToString(),
+                        fireMainCode = systemAddr,
+                        statusName = "模拟量上传",
+                        loopNo = loopNo.ToString(),
+                        partTypeExplain = "",
+                        partType = partType,
+                        systemType = systemType,
+                        userCode = deviceCode,
+                        analogType = analogType,
+                        analogValue = analogValue,
+                        upTime = upTime
+                    };
+
+                    string json = JsonConvert.SerializeObject(result);
+                    Console.WriteLine($"[0x03 模拟量-国标] {json}");
+                    System.Diagnostics.Debug.WriteLine(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke(this, new DeviceEventArgs
+                {
+                    Status = DeviceStatus.Error,
+                    Message = $"解析模拟量异常: {ex.Message}"
+                });
+            }
+        }
+
+        /// <summary>
+        /// 模拟量解析 - 兼容模式（使用2字节数目 + 32字节信息体）
+        /// </summary>
+        private void ParseAnalogQuantityLegacy(byte[] appData, string deviceCode)
         {
             try
             {
@@ -698,27 +877,21 @@ namespace Plugin.UserDevice
                 int messageNumber = (appData[2] << 8) | appData[3];
                 if (messageNumber <= 0) return;
 
-                int unitSize = 32; // 每条32字节
+                int unitSize = 32;
 
                 for (int i = 0; i < messageNumber && (4 + (i + 1) * unitSize) <= appData.Length; i++)
                 {
                     int idx = 4 + i * unitSize;
                     string message = BitConverter.ToString(appData, idx, unitSize).Replace("-", "");
 
-                    // 完全按照JAVA的Analog解析
                     int systemType = Convert.ToInt32(message.Substring(0, 2), 16);
                     int fireMainCode = Convert.ToInt32(message.Substring(2, 4), 16);
                     int partType = Convert.ToInt32(message.Substring(4, 6), 16);
-                    // addressNo: 低字节在前
                     string addressNo = Convert.ToInt32(message.Substring(8, 2) + message.Substring(6, 2), 16).ToString();
-                    // loopNo: 低字节在前
                     string loopNo = Convert.ToInt32(message.Substring(12, 2) + message.Substring(10, 2), 16).ToString();
-                    // analogType: substring(14,16)
                     int analogType = Convert.ToInt32(message.Substring(14, 16), 16);
-                    // analogValue: substring(16,20)
                     int analogValue = Convert.ToInt32(message.Substring(16, 20), 16);
 
-                    // 时间
                     string upTime = "";
                     if (message.Length >= 32)
                     {
@@ -731,7 +904,6 @@ namespace Plugin.UserDevice
                         upTime = $"20{year:D2}-{month:D2}-{day:D2} {hour:D2}:{min:D2}:{sec:D2}";
                     }
 
-                    // 设备编号
                     string deviceCodeFull = deviceCode + fireMainCode + "-" + loopNo + "-" + addressNo;
 
                     var result = new
@@ -753,7 +925,7 @@ namespace Plugin.UserDevice
                     };
 
                     string json = JsonConvert.SerializeObject(result);
-                    Console.WriteLine($"[0x03 模拟量] {json}");
+                    Console.WriteLine($"[0x03 模拟量-兼容] {json}");
                     System.Diagnostics.Debug.WriteLine(json);
                 }
             }
@@ -762,7 +934,7 @@ namespace Plugin.UserDevice
                 StatusChanged?.Invoke(this, new DeviceEventArgs
                 {
                     Status = DeviceStatus.Error,
-                    Message = $"解析模拟量异常: {ex.Message}"
+                    Message = $"解析模拟量异常(兼容模式): {ex.Message}"
                 });
             }
         }

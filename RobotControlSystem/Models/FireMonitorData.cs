@@ -11,5 +11,10 @@ namespace RobotControlSystem.Models
         public string RawJson { get; set; }
         public int StatusCode { get; set; }
         public string MessageType { get; set; }
+        // 追加解析字段
+        public int LoopNo { get; set; }
+        public int NodeNo { get; set; }
+        // 状态发生时间（BCD解析后的人类可读字符串）
+        public string EventTime { get; set; }
     }
 }

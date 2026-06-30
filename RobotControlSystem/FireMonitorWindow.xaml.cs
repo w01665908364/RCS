@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Threading.Tasks;
 using System.Windows.Data;
 using System.Windows.Threading;
 using RobotControlSystem.Interfaces;
@@ -101,39 +102,53 @@ namespace RobotControlSystem
         {
             System.Diagnostics.Debug.WriteLine($"[收到事件] Status={e.Status}, Message={e.Message}");
 
-            Dispatcher.Invoke(() =>
+            // ✅ 关键改动：将处理逻辑放到后台线程，避免卡死 UI
+            _ = Task.Run(() =>
             {
-                LastUpdateTime = DateTime.Now;
-
-                switch (e.Status)
+                try
                 {
-                    case DeviceStatus.Online:
-                        StatusText = "连接成功";
-                        break;
-                    case DeviceStatus.Offline:
-                        StatusText = "已断开";
-                        break;
-                    case DeviceStatus.Error:
-                        StatusText = $"错误: {e.Message}";
-                        break;
-                    case DeviceStatus.FireAlarm:
-                        StatusText = "🚨 收到火警";
-                        break;
+                    Dispatcher.Invoke(() => LastUpdateTime = DateTime.Now);
+
+                    if (!string.IsNullOrEmpty(e.Message) && e.Message.TrimStart().StartsWith("{"))
+                    {
+                        string deviceCode = ParseAndAddData(e.Message);
+
+                        // 使用事件匹配引擎匹配规则
+                        var matchedRules = Services.EventMatchEngine.Instance.MatchRules(e.Status, e.Message);
+                        foreach (var rule in matchedRules)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[事件匹配] {rule.EventName} -> {rule.RecipeName}");
+                            if (ExecuteRecipeByName != null)
+                                Dispatcher.Invoke(() => ExecuteRecipeByName(rule.RecipeName));
+                        }
+
+                        // 没匹配到规则时，仍按旧逻辑用 deviceCode 尝试
+                        if (matchedRules.Count == 0 && ExecuteRecipeByName != null && !string.IsNullOrEmpty(deviceCode))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[信号触发] 未匹配规则，按DeviceCode尝试: {deviceCode}");
+                            Dispatcher.Invoke(() => ExecuteRecipeByName(deviceCode));
+                        }
+                    }
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        switch (e.Status)
+                        {
+                            case DeviceStatus.Online: StatusText = "连接成功"; break;
+                            case DeviceStatus.Offline: StatusText = "已断开"; break;
+                            case DeviceStatus.Error: StatusText = $"错误: {e.Message}"; break;
+                            case DeviceStatus.FireAlarm: StatusText = "🚨 收到火警"; break;
+                        }
+                    });
                 }
-
-                if (!string.IsNullOrEmpty(e.Message) && e.Message.TrimStart().StartsWith("{"))
+                catch (Exception ex)
                 {
-                    ParseAndAddData(e.Message);
-                }
-
-                if (e.Status == DeviceStatus.FireAlarm && ExecuteRecipeByName != null)
-                {
-                    ExecuteRecipeByName(e.Message);
+                    System.Diagnostics.Debug.WriteLine($"[后台处理异常] {ex.Message}");
                 }
             });
         }
 
-        private void ParseAndAddData(string jsonMessage)
+        private string ParseAndAddData(string jsonMessage)
         {
             try
             {
@@ -142,26 +157,54 @@ namespace RobotControlSystem
                 var data = new FireMonitorData
                 {
                     Timestamp = DateTime.Now,
-                    DeviceCode = json["userCode"]?.ToString() ?? json["deviceCode"]?.ToString() ?? "",
-                    StatusName = json["statusName"]?.ToString() ?? "",
-                    Address = json["address"]?.ToString() ?? "",
-                    RawJson = jsonMessage
+                    // ✅ 优先使用 deviceCode（完整编码）
+                    DeviceCode = json["deviceCode"]?.ToString() ?? json["userCode"]?.ToString() ?? "",
+                    StatusName = json["statusName"]?.ToString() ?? json["status"]?.ToString() ?? "",
+                    Address = json["address"]?.ToString() ?? json["partExplain"]?.ToString() ?? "",
+                    RawJson = jsonMessage,
+                    MessageType = json["messageType"]?.ToString() ?? "设备状态"
                 };
 
-                if (data.StatusName.Contains("火警"))
+                // ✅ 修复：loopNo 和 nodeNo 是字符串类型，需要正确转换
+                if (json["loopNo"] != null)
+                {
+                    if (int.TryParse(json["loopNo"].ToString(), out int loopNo))
+                        data.LoopNo = loopNo;
+                }
+                if (json["nodeNo"] != null)
+                {
+                    if (int.TryParse(json["nodeNo"].ToString(), out int nodeNo))
+                        data.NodeNo = nodeNo;
+                }
+                // addressNo 也可能是字符串
+                if (json["addressNo"] != null)
+                {
+                    if (int.TryParse(json["addressNo"].ToString(), out int addrNo))
+                        data.NodeNo = addrNo;  // 如果 NodeNo 还没设置
+                }
+                if (json["time"] != null) data.EventTime = json["time"].ToString();
+
+                if (!string.IsNullOrEmpty(data.StatusName) && data.StatusName.Contains("火警"))
                 {
                     data.StatusCode = 1;
                     data.MessageType = "报警";
                 }
-                else if (data.StatusName.Contains("故障"))
+                else if (!string.IsNullOrEmpty(data.StatusName) && data.StatusName.Contains("故障"))
                 {
                     data.StatusCode = 0;
                     data.MessageType = "故障";
                 }
                 else
                 {
-                    data.StatusCode = 2;
-                    data.MessageType = "设备状态";
+                    if (json["statusCode"] != null)
+                        data.StatusCode = (int)json["statusCode"];
+                    else if (json["status"] != null && json["status"].Type == JTokenType.Integer)
+                        data.StatusCode = (int)json["status"];
+                    else
+                        data.StatusCode = 2;
+
+                    if (string.IsNullOrEmpty(data.MessageType))
+                        data.MessageType = "设备状态";
                 }
 
                 Dispatcher.Invoke(() =>
@@ -173,17 +216,19 @@ namespace RobotControlSystem
                         AlertDataList.Insert(0, data);
                     }
 
-                    System.Diagnostics.Debug.WriteLine($"[数据已添加] StatusName={data.StatusName}, DeviceCode={data.DeviceCode}, AllDataList={AllDataList.Count}");
-
+                    System.Diagnostics.Debug.WriteLine($"[数据已添加] StatusName={data.StatusName}, DeviceCode={data.DeviceCode}");
                     RefreshAllBindings();
                 });
 
                 while (AllDataList.Count > 1000) AllDataList.RemoveAt(AllDataList.Count - 1);
                 while (AlertDataList.Count > 200) AlertDataList.RemoveAt(AlertDataList.Count - 1);
+
+                return data.DeviceCode;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"解析数据失败: {ex.Message}");
+                return null;
             }
         }
 

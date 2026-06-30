@@ -121,17 +121,8 @@ namespace RobotControlSystem
             // 主程序处理用户传输装置的状态变化（如火警）
             System.Diagnostics.Debug.WriteLine($"[UserDevice] {e.Status}: {e.Message}");
 
-            if (e.Status == DeviceStatus.FireAlarm)
-            {
-                // 火警时，可以在主窗口显示，并执行同名配方
-                Application.Current.Dispatcher.Invoke(() =>
-                {
-                    if (Application.Current.MainWindow is MainWindow mainWindow)
-                    {
-                        mainWindow.OnFireAlarmReceived(e.Message);
-                    }
-                });
-            }
+            // 现在由 EventProcessor 统一处理事件匹配，不再手动判断火警
+            // EventProcessor 会在后台线程匹配规则并触发配方执行
         }
 
         private void OnAgvStatusChanged(object sender, DeviceEventArgs e)

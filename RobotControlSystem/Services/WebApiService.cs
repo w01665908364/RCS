@@ -1,12 +1,18 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
+using RobotControlSystem.Interfaces;
+using RobotControlSystem.Models;
+using RobotControlSystem.Services;
 
 namespace RobotControlSystem.Services
 {
@@ -26,7 +32,7 @@ namespace RobotControlSystem.Services
             _agvService = agvService;
             _robotService = robotService;
         }
-
+        private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
         public async Task StartAsync(CancellationToken cancellationToken)
         {
             _host = Host.CreateDefaultBuilder()
@@ -42,7 +48,7 @@ namespace RobotControlSystem.Services
                                        .AllowAnyMethod()
                                        .AllowAnyHeader();
                             });
-                        });
+                        }).AddOptions<JsonSerializerOptions>().Configure(o => o.PropertyNameCaseInsensitive = true);
                     })
                     .Configure(app =>
                     {
@@ -58,7 +64,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<NavigateRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<NavigateRequest>(context.Request.Body, _jsonOpts);
                                     if (body == null || string.IsNullOrEmpty(body.TargetSite))
                                     {
                                         context.Response.StatusCode = 400;
@@ -82,7 +88,8 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body);
+                                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                    var body = await JsonSerializer.DeserializeAsync<NavigateRequest>(context.Request.Body, options);
                                     var (success, msg) = await _agvService.LockAsync(body?.Vehicle);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = msg }));
@@ -99,7 +106,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body, _jsonOpts);
                                     var (success, msg) = await _agvService.UnlockAsync(body?.Vehicle);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = msg }));
@@ -116,7 +123,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body, _jsonOpts);
                                     var (success, msg) = await _agvService.PauseAsync(body?.Vehicle);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = msg }));
@@ -133,7 +140,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<VehicleRequest>(context.Request.Body, _jsonOpts);
                                     var (success, msg) = await _agvService.ResumeAsync(body?.Vehicle);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = msg }));
@@ -150,7 +157,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<EStopRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<EStopRequest>(context.Request.Body, _jsonOpts);
                                     var (success, msg) = await _agvService.SetSoftEmergencyStopAsync(body?.Enable ?? true, body?.Vehicle);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = msg }));
@@ -193,7 +200,17 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<RobotRequest>(context.Request.Body);
+                                    // 【重点修复 20行】：使用 StreamReader 彻底读取 Body，防止由于请求头缺失导致反序列化为空
+                                    using var reader = new System.IO.StreamReader(context.Request.Body);
+                                    var bodyText = await reader.ReadToEndAsync();
+
+                                    RobotRequest body = null;
+                                    if (!string.IsNullOrWhiteSpace(bodyText))
+                                    {
+                                        try { body = JsonSerializer.Deserialize<RobotRequest>(bodyText, _jsonOpts); }
+                                        catch { /* 忽略格式错误，由下方统一拦截 */ }
+                                    }
+
                                     if (body == null || string.IsNullOrEmpty(body.RobotIp))
                                     {
                                         context.Response.StatusCode = 400;
@@ -206,8 +223,9 @@ namespace RobotControlSystem.Services
 
                                     var success = await _robotService.ConnectAsync();
                                     context.Response.StatusCode = success ? 200 : 500;
-                                    await context.Response.WriteAsync(JsonSerializer.Serialize(new { 
-                                        success, 
+                                    await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                                    {
+                                        success,
                                         connected = _robotService.IsConnected,
                                         message = success ? "连接成功" : "连接失败"
                                     }));
@@ -224,7 +242,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<RobotRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<RobotRequest>(context.Request.Body, _jsonOpts);
                                     
                                     // 如果指定了新的IP，先连接
                                     if (body != null && !string.IsNullOrEmpty(body.RobotIp))
@@ -260,7 +278,7 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<RobotRequest>(context.Request.Body);
+                                    var body = await JsonSerializer.DeserializeAsync<RobotRequest>(context.Request.Body, _jsonOpts);
                                     
                                     if (body != null && !string.IsNullOrEmpty(body.RobotIp))
                                     {
@@ -295,8 +313,17 @@ namespace RobotControlSystem.Services
                             {
                                 try
                                 {
-                                    var body = await JsonSerializer.DeserializeAsync<RunTaskRequest>(context.Request.Body);
-                                    
+                                    // 同样使用 StreamReader 增强鲁棒性
+                                    using var reader = new System.IO.StreamReader(context.Request.Body);
+                                    var bodyText = await reader.ReadToEndAsync();
+
+                                    RunTaskRequest body = null;
+                                    if (!string.IsNullOrWhiteSpace(bodyText))
+                                    {
+                                        try { body = JsonSerializer.Deserialize<RunTaskRequest>(bodyText, _jsonOpts); }
+                                        catch { }
+                                    }
+
                                     if (body != null && !string.IsNullOrEmpty(body.RobotIp))
                                     {
                                         _robotService.RobotIP = body.RobotIp;
@@ -315,6 +342,15 @@ namespace RobotControlSystem.Services
                                     }
 
                                     var taskName = string.IsNullOrEmpty(body?.TaskName) ? "动作3.task" : body.TaskName;
+
+                                    // 【重点修复：安全注入漏洞 (SEC-INJECT-002)】：过滤 Linux Shell 命令截断符
+                                    if (taskName.Contains(";") || taskName.Contains("&") || taskName.Contains("|") || taskName.Contains("`") || taskName.Contains("$"))
+                                    {
+                                        context.Response.StatusCode = 400;
+                                        await context.Response.WriteAsync(JsonSerializer.Serialize(new { success = false, error = "非法的任务名称(包含危险字符)" }));
+                                        return;
+                                    }
+
                                     var success = await _robotService.RunTaskAsync(taskName);
                                     context.Response.StatusCode = success ? 200 : 500;
                                     await context.Response.WriteAsync(JsonSerializer.Serialize(new { success, message = success ? "任务启动成功" : "任务启动失败", taskName }));
@@ -336,6 +372,60 @@ namespace RobotControlSystem.Services
                                         connected = _robotService.IsConnected,
                                         ip = _robotService.RobotIP,
                                         port = _robotService.RobotPort
+                                    }));
+                                }
+                                catch (Exception ex)
+                                {
+                                    context.Response.StatusCode = 500;
+                                    await context.Response.WriteAsync(JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+                                }
+                            });
+
+                            // ==================== 事件规则 API ====================
+
+                            // POST /api/event/trigger - 远程触发事件命令
+                            endpoints.MapPost("/api/event/trigger", async context =>
+                            {
+                                try
+                                {
+                                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                                    var body = await JsonSerializer.DeserializeAsync<RemoteCommandRequest>(context.Request.Body, options);
+                                    if (body == null || string.IsNullOrEmpty(body.Command))
+                                    {
+                                        context.Response.StatusCode = 400;
+                                        await context.Response.WriteAsync(JsonSerializer.Serialize(new { success = false, error = "缺少 command 参数" }));
+                                        return;
+                                    }
+
+                                    // 用匹配引擎匹配规则
+                                    var matchedRules = EventMatchEngine.Instance.MatchRules(
+                                        DeviceStatus.Custom, body.Command, "远端");
+
+                                    var executedRecipes = new List<string>();
+
+                                    if (matchedRules.Count > 0)
+                                    {
+                                        // 获取 MainWindow 实例执行配方
+                                        Application.Current.Dispatcher.Invoke(() =>
+                                        {
+                                            var mainWindow = Application.Current.Windows.OfType<MainWindow>().FirstOrDefault();
+                                            if (mainWindow != null)
+                                            {
+                                                foreach (var rule in matchedRules)
+                                                {
+                                                    mainWindow.TryExecuteRecipeByName(rule.RecipeName);
+                                                    executedRecipes.Add(rule.RecipeName);
+                                                }
+                                            }
+                                        });
+                                    }
+
+                                    context.Response.StatusCode = 200;
+                                    await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                                    {
+                                        success = true,
+                                        matchedCount = matchedRules.Count,
+                                        executedRecipes
                                     }));
                                 }
                                 catch (Exception ex)
@@ -401,6 +491,11 @@ code { background: #e0e0e0; padding: 2px 6px; border-radius: 3px; }
 <li><code>GET</code> /api/robot/status - 获取状态</li>
 </ul>
 
+<h2>📋 事件规则</h2>
+<ul>
+<li><code>POST</code> /api/event/trigger - 远程触发事件 <span style=""color:#666"">{command}</span></li>
+</ul>
+
 <h2>⚙️ 系统</h2>
 <ul>
 <li><code>GET</code> /api/system/health - 健康检查</li>
@@ -462,4 +557,6 @@ code { background: #e0e0e0; padding: 2px 6px; border-radius: 3px; }
         public int RobotPort { get; set; } = 29999;
         public string TaskName { get; set; }
     }
+
+    public record RemoteCommandRequest(string Command);
 }
