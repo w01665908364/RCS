@@ -69,18 +69,17 @@ namespace RobotControlSystem.Services
         {
             var body = new JObject
             {
-                ["id"] = string.IsNullOrWhiteSpace(orderId) ? Guid.NewGuid().ToString() : orderId,
+                ["id"] = string.IsNullOrWhiteSpace(orderId) ? "a" + Guid.NewGuid().ToString("N").Substring(0, 8) : orderId,
                 ["vehicle"] = ResolveVehicleName(vehicleName),
                 ["complete"] = complete,
                 ["blocks"] = new JArray
-                {
-                    new JObject
-                    {
-                        ["blockId"] = string.IsNullOrWhiteSpace(blockId) ? "block_1" : blockId,
-                        ["location"] = targetSite,
-                        ["actionType"] = "GOTO_SITE"
-                    }
-                }
+        {
+            new JObject
+            {
+                ["blockId"] = string.IsNullOrWhiteSpace(blockId) ? "a" + Guid.NewGuid().ToString("N").Substring(0, 8) : blockId,
+                ["location"] = targetSite
+            }
+        }
             };
 
             return await PostAsync("/setOrder", body);

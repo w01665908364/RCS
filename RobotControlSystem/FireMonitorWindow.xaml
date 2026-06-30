@@ -17,18 +17,21 @@
         <local:StatusToColorConverter x:Key="StatusToColorConverter"/>
         <local:BoolToColorConverter x:Key="BoolToColorConverter"/>
         <DataTemplate x:Key="DeviceDataTemplate">
-            <Border BorderThickness="0,0,0,1" BorderBrush="#E0E0E0" Padding="5">
+            <Border BorderThickness="0,0,0,1" BorderBrush="#E0E0E0" Padding="5" ToolTip="{Binding RawJson}">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="100"/>
-                        <ColumnDefinition Width="150"/>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="200"/>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="80"/>    <!-- 时间 -->
+                        <ColumnDefinition Width="150"/>   <!-- 设备编码 -->
+                        <ColumnDefinition Width="80"/>    <!-- 消息类型 -->
+                        <ColumnDefinition Width="60"/>    <!-- 回路 -->
+                        <ColumnDefinition Width="60"/>    <!-- 节点 -->
+                        <ColumnDefinition Width="120"/>   <!-- 事件时间 -->
+                        <ColumnDefinition Width="*"/>     <!-- 地址 -->
+                        <ColumnDefinition Width="80"/>    <!-- 状态 -->
+                        <ColumnDefinition Width="50"/>    <!-- 详细按钮 -->
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat='HH:mm:ss'}" 
+                    <TextBlock Grid.Column="0" Text="{Binding Timestamp, StringFormat='MM-dd HH:mm'}" 
                                VerticalAlignment="Center" FontFamily="Consolas"/>
                     <TextBlock Grid.Column="1" Text="{Binding DeviceCode}" 
                                VerticalAlignment="Center" FontWeight="Bold"/>
@@ -39,16 +42,19 @@
                         <TextBlock Text="{Binding MessageType}" Foreground="White" 
                                    HorizontalAlignment="Center" FontSize="10" FontWeight="Bold"/>
                     </Border>
-                    <TextBlock Grid.Column="3" Text="{Binding Address}" 
+                    <TextBlock Grid.Column="3" Text="{Binding LoopNo}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Column="4" Text="{Binding NodeNo}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Column="5" Text="{Binding EventTime}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Column="6" Text="{Binding Address}" 
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <Border Grid.Column="4" CornerRadius="3" Padding="3,1">
+                    <Border Grid.Column="7" CornerRadius="3" Padding="3,1">
                         <Border.Background>
                             <Binding Path="StatusCode" Converter="{StaticResource StatusToColorConverter}"/>
                         </Border.Background>
                         <TextBlock Text="{Binding StatusName}" Foreground="White" 
                                    HorizontalAlignment="Center" FontSize="10" FontWeight="Bold"/>
                     </Border>
-                    <Button Grid.Column="5" Content="详细" Width="40" Height="20" 
+                    <Button Grid.Column="8" Content="详细" Width="40" Height="20" 
                             HorizontalAlignment="Right"/>
                 </Grid>
             </Border>
@@ -80,30 +86,29 @@
         <Border Grid.Row="0" Background="#007ACC" Padding="10">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="消防设备实时监控系统" FontSize="18" FontWeight="Bold" Foreground="White"/>
-                <TextBlock Text="{Binding StatusMessage}" Margin="20,0,0,0" 
+                <TextBlock Text="{Binding StatusText}" Margin="20,0,0,0" 
                            VerticalAlignment="Center" Foreground="White" FontSize="12"/>
             </StackPanel>
         </Border>
 
         <Border Grid.Row="1" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1" Padding="10">
             <StackPanel Orientation="Horizontal">
-                <Button Content="连接" Command="{Binding ConnectCommand}" 
+                <Button Content="连接" 
                         Width="80" Margin="0,0,10,0" Background="#4CAF50" Foreground="White" Click="Button_Click"/>
-                <Button Content="断开" Command="{Binding DisconnectCommand}" 
+                <Button Content="断开" 
                         Width="80" Margin="0,0,10,0" Background="#F44336" Foreground="White"/>
-                <Button Content="重连" Command="{Binding ReconnectCommand}" 
+                <Button Content="重连" 
                         Width="80" Margin="0,0,10,0" Background="#FF9800" Foreground="White"/>
 
                 <Button Content="清空数据" Width="80" Margin="10,0,10,0" Click="BtnClearData_Click"/>
-                <Button Content="测试数据" Command="{Binding TestCommand}" 
+                <Button Content="测试数据" 
                         Width="80" Margin="0,0,10,0"/>
 
-                <CheckBox Content="仅显示报警/故障" IsChecked="{Binding ShowAlertsOnly}" 
+                <CheckBox Content="仅显示报警/故障" 
                           VerticalAlignment="Center" Margin="10,0,10,0"/>
 
                 <TextBlock Text="设备编码过滤:" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                <TextBox Text="{Binding FilterDeviceCode, UpdateSourceTrigger=PropertyChanged}" 
-                         Width="120" VerticalAlignment="Center"/>
+                <TextBox Width="120" VerticalAlignment="Center"/>
 
                 <TextBlock Text="消息统计:" VerticalAlignment="Center" FontWeight="Bold" Margin="20,0,5,0"/>
                 <TextBlock Text="总数:" VerticalAlignment="Center" Margin="0,0,2,0"/>

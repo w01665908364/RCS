@@ -64,33 +64,28 @@ namespace RobotControlSystem
         // 配方编辑器窗口引用
         private RecipeFlowEditorWindow _recipeFlowEditorWindow;
 
+        // 事件处理器
+        private Services.EventProcessor _eventProcessor;
+
         // 实时位置轮询定时器
         private DispatcherTimer _robotStatusTimer;
         private const string RobotStatusUrl = "http://127.0.0.1:8088/robotsStatus";
 
         private void OnUserDeviceStatusChanged(object sender, DeviceEventArgs e)
         {
-            // 主窗口处理用户传输装置的状态变化
+            // 现在由 EventProcessor 统一处理事件匹配和配方执行
+            // 这里仅做 UI 连接状态更新
             Dispatcher.Invoke(() =>
             {
-                if (e.Status == DeviceStatus.FireAlarm)
-                {
-                    // 更新UI火警状态
-                    borderFireAlarm.Background = Brushes.Red;
-                    txtFireAlarmStatus.Text = $"🚨 火警！{e.Message}";
-                    txtAgvLockStatus.Text = $"火警: {e.Message}";
-
-                    // 执行同名配方（调用已有的方法）
-                    TryExecuteRecipeByName(e.Message);
-                }
-                else if (e.Status == DeviceStatus.Online)
+                if (e.Status == DeviceStatus.Online)
                 {
                     borderFireAlarm.Background = Brushes.LightGreen;
                     txtFireAlarmStatus.Text = "无火警·正常";
                 }
-                else
+                else if (e.Status == DeviceStatus.Offline)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[UserDevice] {e.Status}: {e.Message}");
+                    borderFireAlarm.Background = Brushes.Gray;
+                    txtFireAlarmStatus.Text = "设备离线";
                 }
             });
         }
@@ -141,6 +136,24 @@ namespace RobotControlSystem
 
                 // 订阅状态变化事件
                 _userDevice.StatusChanged += OnUserDeviceStatusChanged;
+
+                // ========== 初始化事件处理器 ==========
+                _eventProcessor = new Services.EventProcessor(_userDevice);
+                _eventProcessor.RuleMatched += (rule, args) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainWindow] 规则匹配: {rule.EventName} -> 执行配方: {rule.RecipeName}");
+                        TryExecuteRecipeByName(rule.RecipeName);
+
+                        if (rule.EventType == Models.EventType.火警报警器)
+                        {
+                            borderFireAlarm.Background = Brushes.Red;
+                            txtFireAlarmStatus.Text = $"🚨 {rule.EventName}！{args.Message}";
+                            txtAgvLockStatus.Text = $"火警: {args.Message}";
+                        }
+                    });
+                };
 
                 // 启动连接和监控
                 await _userDevice.ConnectAsync();
@@ -236,6 +249,13 @@ namespace RobotControlSystem
         }
 
         // ==================== 消防实时监控 ====================
+        private void BtnEventRuleDesigner_Click(object sender, RoutedEventArgs e)
+        {
+            var designer = new Editors.EventRuleDesignerWindow();
+            designer.Owner = this;
+            designer.Show();
+        }
+
         private void BtnFireMonitor_Click(object sender, RoutedEventArgs e)
         {
             if (_fireMonitorWindow == null || !_fireMonitorWindow.IsVisible)
@@ -243,8 +263,8 @@ namespace RobotControlSystem
                 _fireMonitorWindow = new FireMonitorWindow();
                 _fireMonitorWindow.Owner = this;
 
-                // ❌ 删除以下两行（不再需要设置配方执行委托）
-                // _fireMonitorWindow.ExecuteRecipeByName = TryExecuteRecipeByName;
+                // ✅ 恢复委托设置：让 FireMonitorWindow 可以调用主窗口的配方执行方法
+                _fireMonitorWindow.ExecuteRecipeByName = TryExecuteRecipeByName;
 
                 _fireMonitorWindow.Closed += (s, args) => _fireMonitorWindow = null;
                 _fireMonitorWindow.Show();
@@ -261,7 +281,7 @@ namespace RobotControlSystem
         }
 
         // ==================== 根据火警文字查找并执行同名配方 ====================
-        private async void TryExecuteRecipeByName(string alarmText)
+        public async void TryExecuteRecipeByName(string alarmText)
         {
             if (string.IsNullOrEmpty(alarmText))
             {
@@ -1103,19 +1123,14 @@ namespace RobotControlSystem
         private async Task NavigateToSite(string site)
         {
             var vehicle = GetSelectedVehicle();
-            int counter = site == "AP3" ? _ap3Counter : _ap4Counter;
-            string blockId = site == "AP3" ? $"b1.{counter}" : $"b2.{counter}";
-            string taskId = site == "AP3" ? $"task1.{counter}" : $"task2.{counter}";
+            string blockId = "a" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            string taskId = "a" + Guid.NewGuid().ToString("N").Substring(0, 8);
 
             try
             {
                 var (success, msg) = await _agvHttpService.CreateOrderAsync(site, vehicle, taskId, blockId, true);
                 if (success)
                 {
-                    if (site == "AP3")
-                        _ap3Counter++;
-                    else
-                        _ap4Counter++;
                     MessageBox.Show($"已发送导航到{site}命令，任务ID: {taskId}");
                 }
                 else
