@@ -1,13 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191110102MACQD9K64018705
-    ProduceID: 7625833750491824418-data_volume/files/所有对话/主对话/RCS-README.md
-    ReservedCode1: ""
-    ContentPropagator: 001191110102MACQD9K64028705
-    PropagateID: 1224224356967753#1782827643910
-    ReservedCode2: ""
----
 # RCS - 消防机器人上位机控制系统
 
 > V3.2 | C# WPF | 事件规则引擎
@@ -115,11 +105,3 @@ Plugin.UserDevice/
 - **IDE**: Visual Studio 2022
 - **框架**: .NET 8.0
 - **OS**: Windows 11
-
-## License
-
-MIT
-
----
-
-> 本内容由 Coze AI 生成，请遵循相关法律法规及《人工智能生成合成内容标识办法》使用与传播。
